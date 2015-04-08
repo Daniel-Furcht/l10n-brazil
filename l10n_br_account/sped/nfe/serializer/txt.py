@@ -65,7 +65,7 @@ def nfe_export(cr, uid, ids, nfe_environment='1',
                    'tpAmb': nfe_environment,
                    'finNFe': inv.nfe_purpose,
                    'procEmi': '0',
-                   'VerProc': '2.2.1',
+                   'VerProc': '2.2.20',
                    'dhCont': '',
                    'xJust': '',
                    }
@@ -224,9 +224,10 @@ def nfe_export(cr, uid, ids, nfe_environment='1',
         else:
             xNome = normalize('NFKD', unicode(inv.partner_id.legal_name or '')).encode('ASCII', 'ignore')
 
+        inscricao_estadual = re.sub('[%s]' % re.escape(string.punctuation), '', inv.partner_id.inscr_est or '')
         StrRegE = {
                    'xNome': xNome,
-                   'IE': re.sub('[%s]' % re.escape(string.punctuation), '', inv.partner_id.inscr_est or ''),
+                   'IE': inscricao_estadual if inv.partner_id.is_company else '',
                    'ISUF': '',
                    'email': inv.partner_id.email or '',
                    }
@@ -318,7 +319,10 @@ def nfe_export(cr, uid, ids, nfe_environment='1',
             else:
                 CProd = unicode(i).strip().rjust(4, u'0')
                 XProd = normalize('NFKD', unicode(inv_line.name or '')).encode('ASCII','ignore')
-
+            if inv_line.discount_value :
+                discount_value = str("%.2f" % inv_line.discount_value)
+            else:    
+                discount_value = ''            
             StrRegI = {
                    'CProd': CProd,
                    'CEAN': inv_line.product_id.ean13 or '',
@@ -327,15 +331,15 @@ def nfe_export(cr, uid, ids, nfe_environment='1',
                    'CFOP': inv_line.cfop_id.code,
                    'UCom': normalize('NFKD', unicode(inv_line.uos_id.name or '',)).encode('ASCII','ignore'),
                    'QCom': str("%.4f" % inv_line.quantity),
-                   'VUnCom': str("%.7f" % (inv_line.price_unit * (1-(inv_line.discount or 0.0)/100.0))),
-                   'VProd': str("%.2f" % inv_line.price_total),
+                   'VUnCom': str("%.7f" % (inv_line.price_unit)),
+                   'VProd': str("%.2f" % (inv_line.price_gross)),
                    'CEANTrib': inv_line.product_id.ean13 or '',
                    'UTrib': normalize('NFKD', unicode(inv_line.uos_id.name or '',)).encode('ASCII','ignore'),
                    'QTrib': str("%.4f" % inv_line.quantity),
                    'VUnTrib': str("%.7f" % inv_line.price_unit),
                    'VFrete': freight_value,
                    'VSeg': insurance_value,
-                   'VDesc': '',
+                   'VDesc': discount_value,
                    'vOutro': other_costs_value,
                    'indTot': '1',
                    'xPed': '',
@@ -654,7 +658,7 @@ def nfe_export(cr, uid, ids, nfe_environment='1',
 
                 StrFile += StrO
 
-                if ipi_cst in ('50', '51', '52') and inv_line.ipi_percent > 0:
+                if ipi_cst in ('00', '49', '50', '99'):
                     StrRegO07 = {
                        'CST': ipi_cst,
                        'VIPI': str("%.2f" % inv_line.ipi_value),
@@ -683,24 +687,7 @@ def nfe_export(cr, uid, ids, nfe_environment='1',
 
                     StrFile += StrO1
 
-                if ipi_cst in ('99'):
-                    StrRegO07 = {
-                                 'CST': ipi_cst,
-                                 'VIPI': str("%.2f" % inv_line.ipi_value),
-                                 }
-
-                    StrO07 = ('O07|%s|%s|\n') % (StrRegO07['CST'], StrRegO07['VIPI'])
-                    StrFile += StrO07
-
-                    StrRegO10 = {
-                                 'VBC': str("%.2f" % inv_line.ipi_base),
-                                 'PIPI': str("%.2f" % inv_line.ipi_percent),
-                                 }
-
-                    StrO10 = ('O10|%s|%s|\n') % (StrRegO10['VBC'], StrRegO10['PIPI'])
-                    StrFile += StrO10
-
-                if inv_line.ipi_percent == 0 and not ipi_cst in ('99'):
+                else:
                     StrO1 = 'O08|%s|\n' % ipi_cst
                     StrFile += StrO1
 
@@ -737,7 +724,7 @@ def nfe_export(cr, uid, ids, nfe_environment='1',
             StrQ = 'Q|\n'
             StrFile += StrQ
 
-            if pis_cst in ('01') and inv_line.pis_percent > 0:
+            if pis_cst in ('01','02'):
                 StrRegQ02 = {
                              'CST': pis_cst,
                              'VBC': str("%.2f" % inv_line.pis_base),
@@ -752,7 +739,26 @@ def nfe_export(cr, uid, ids, nfe_environment='1',
 
                 StrFile += StrQ02
 
-            if pis_cst in ('99'):
+            elif pis_cst in ('03'):
+                StrRegQ03 = {
+                             'CST': pis_cst,
+                             'QBCProd': str("%.2f" % inv_line.pis_base),
+                             'VAliqProd': str("%.2f" % inv_line.pis_percent),
+                             'VPIS': str("%.2f" % inv_line.pis_value),
+                             }
+
+                StrQ03 = ('Q02|%s|%s|%s|%s|\n') % (StrRegQ03['CST'],
+                                                   StrRegQ03['QBCProd'],
+                                                   StrRegQ03['VAliqProd'],
+                                                   StrRegQ03['VPIS'])
+
+                StrFile += StrQ03
+            
+            elif pis_cst in ('04','06','07','08','09'):
+                StrQ02 = 'Q04|%s|\n' % pis_cst
+                StrFile += StrQ02
+                
+            else:
                 StrRegQ05 = {
                              'CST': pis_cst,
                              'VPIS': str("%.2f" % inv_line.pis_value),
@@ -769,15 +775,13 @@ def nfe_export(cr, uid, ids, nfe_environment='1',
                 StrQ07 = ('Q07|%s|%s|\n') % (StrRegQ07['VBC'], StrRegQ07['PPIS'])
                 StrFile += StrQ07
 
-            if inv_line.pis_percent == 0 and not pis_cst in ('99'):
-                StrQ02 = 'Q04|%s|\n' % pis_cst
-                StrFile += StrQ02
-
+            
+                
             StrQ = 'S|\n'
 
             StrFile += StrQ
 
-            if cofins_cst in ('01') and inv_line.cofins_percent > 0:
+            if cofins_cst in ('01', '02'):
                 StrRegS02 = {
                    'CST': cofins_cst,
                    'VBC': str("%.2f" % inv_line.cofins_base),
@@ -787,8 +791,23 @@ def nfe_export(cr, uid, ids, nfe_environment='1',
 
                 StrS02 = ('S02|%s|%s|%s|%s|\n') % (StrRegS02['CST'], StrRegS02['VBC'], StrRegS02['PCOFINS'], StrRegS02['VCOFINS'])
                 StrFile += StrS02
+            
+            elif cofins_cst in ('03'):
+                StrRegS03 = {
+                   'CST': cofins_cst,
+                   'QBCProd': str("%.2f" % inv_line.cofins_base),
+                   'VAliqProd': str("%.2f" % inv_line.cofins_percent),
+                   'VCOFINS': str("%.2f" % inv_line.cofins_value),
+                }
 
-            if cofins_cst in ('99'):
+                StrS03 = ('S03|%s|%s|%s|%s|\n') % (StrRegS03['CST'], StrRegS03['QBCProd'], StrRegS03['VAliqProd'], StrRegS03['VCOFINS'])
+                StrFile += StrS03
+                
+            elif cofins_cst in ('04','06','07','08','09'):
+                StrS04 = 'S04|%s|\n' % cofins_cst
+                StrFile += StrS04
+                
+            else:
                 StrRegS05 = {
                              'CST': cofins_cst,
                              'VCOFINS': str("%.2f" % inv_line.cofins_value),
@@ -805,9 +824,7 @@ def nfe_export(cr, uid, ids, nfe_environment='1',
                 StrS07 = ('S07|%s|%s|\n') % (StrRegS07['VBC'], StrRegS07['PCOFINS'])
                 StrFile += StrS07
 
-            if inv_line.cofins_percent == 0 and not cofins_cst in ('99'):
-                StrS04 = 'S04|%s|\n' % cofins_cst
-                StrFile += StrS04
+           
 
         StrW = 'W|\n'
 
@@ -818,10 +835,10 @@ def nfe_export(cr, uid, ids, nfe_environment='1',
                      'vICMS': str("%.2f" % inv.icms_value),
                      'vBCST': str("%.2f" % inv.icms_st_base),
                      'vST': str("%.2f" % inv.icms_st_value),
-                     'vProd': str("%.2f" % inv.amount_untaxed),
+                     'vProd': str("%.2f" % inv.amount_gross),
                      'vFrete': str("%.2f" % inv.amount_freight),
                      'vSeg': str("%.2f" % inv.amount_insurance),
-                     'vDesc': '0.00',
+                     'vDesc': str("%.2f" % inv.amount_discount),
                      'vII': str("%.2f" % inv.ii_value),
                      'vIPI': str("%.2f" % inv.ipi_value),
                      'vPIS': str("%.2f" % inv.pis_value),
@@ -900,26 +917,28 @@ def nfe_export(cr, uid, ids, nfe_environment='1',
                      'RNTC': '',
                      }
 
-        try:
-            StrRegX18['Placa'] = inv.vehicle_plate or ''
-            StrRegX18['UF'] = inv.vehicle_state_id.code or ''
-            if inv.vehicle_id:
-                StrRegX18['RNTC'] = inv.vehicle_id.rntc_code or ''
-        except AttributeError:
-            pass
+        if inv.vehicle_plate:
+            try:
+                StrRegX18['Placa'] = inv.vehicle_plate or ''
+                StrRegX18['UF'] = inv.vehicle_state_id.code or ''
+                if inv.vehicle_id:
+                    StrRegX18['RNTC'] = inv.vehicle_id.rntc_code or ''
+            except AttributeError:
+                pass
 
-        StrX18 = 'X18|%s|%s|%s|\n' % (StrRegX18['Placa'], StrRegX18['UF'], StrRegX18['RNTC'])
 
-        StrFile += StrX18
+            StrX18 = 'X18|%s|%s|%s|\n' % (StrRegX18['Placa'], StrRegX18['UF'], StrRegX18['RNTC'])
 
-        StrRegX26 = {
-                     'QVol': '',
-                     'Esp': '',
-                     'Marca': '',
-                     'NVol': '',
-                     'PesoL': '',
-                     'PesoB': '',
-                     }
+            StrFile += StrX18
+
+            StrRegX26 = {
+                         'QVol': '',
+                         'Esp': '',
+                         'Marca': '',
+                         'NVol': '',
+                         'PesoL': '',
+                         'PesoB': '',
+                         }
 
         if inv.number_of_packages:
             StrRegX26['QVol'] = inv.number_of_packages
@@ -929,9 +948,9 @@ def nfe_export(cr, uid, ids, nfe_environment='1',
             StrRegX26['PesoL'] = str("%.3f" % inv.weight_net)
             StrRegX26['PesoB'] = str("%.3f" % inv.weight)
 
-        StrX26 = 'X26|%s|%s|%s|%s|%s|%s|\n' % (StrRegX26['QVol'], StrRegX26['Esp'], StrRegX26['Marca'], StrRegX26['NVol'], StrRegX26['PesoL'], StrRegX26['PesoB'])
+            StrX26 = 'X26|%s|%s|%s|%s|%s|%s|\n' % (StrRegX26['QVol'], StrRegX26['Esp'], StrRegX26['Marca'], StrRegX26['NVol'], StrRegX26['PesoL'], StrRegX26['PesoB'])
 
-        StrFile += StrX26
+            StrFile += StrX26
 
         if inv.journal_id.revenue_expense:
 
@@ -959,13 +978,13 @@ def nfe_export(cr, uid, ids, nfe_environment='1',
 
         StrFile += StrZ
 
-        StrRegZA = {
-                    'UFEmbarq': UFEmbarq,
-                    'XLocEmbarq': XLocEmbarq,
-                    }
-
-        StrZA = 'ZA|%s|%s|\n' % (StrRegZA['UFEmbarq'], StrRegZA['XLocEmbarq'])
-        StrFile += StrZA
+        if UFEmbarq!='' or XLocEmbarq!='':
+            StrRegZA = {
+                        'UFEmbarq': UFEmbarq,
+                        'XLocEmbarq': XLocEmbarq,
+                        }
+            StrZA = 'ZA|%s|%s|\n' % (StrRegZA['UFEmbarq'], StrRegZA['XLocEmbarq'])
+            StrFile += StrZA
 
         documents = inv.internal_number
 
